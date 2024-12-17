@@ -1,0 +1,87 @@
+
+pipeline {
+    agent any
+
+    environment {
+        Ec2_Public_IP = ''
+        Ec2_User = 'ec2-user'
+        Remote_directiory = '/home/ec2-user/'
+        Docker_Path = '/home/fafto/first_project/Zomato-app/'
+        Docker_image = 'webapp' 
+        DOCKER_CREDENTIALS = credentials('docker-jenkins')
+    }
+
+    stages {
+        stage ('Git checkout') {
+          steps {
+            checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'jenkins-github', url: 'https://github.com/JakubObrycki/Docker_on_Ec2.git']])
+          }
+        }
+        
+        stage ('Copy script to EC2') {
+            steps {
+                script {
+                    sshagent(['jenkins_key']) {
+                        sh 'scp -o StrictHostKeyChecking=no script.sh ${Ec2_User}@${Ec2_Public_IP}:${Remote_directiory}'
+                        }
+                    }
+                }
+            }
+
+        stage ('Install docker in EC2') {
+            steps {
+                script {
+                    sshagent(['jenkins_key']) {
+                         sh '''
+                            ssh -o StrictHostKeyChecking=no ${Ec2_User}@${Ec2_Public_IP} '/home/ec2-user/./script.sh'
+                        '''
+                        }
+                    }
+                } 
+            } 
+
+        stage ('Copy and build dockerimage in EC2') {
+            steps {
+                script {
+                    sh '''
+                        docker build -t ${Docker_image} .
+                        docker save -o webapp.tar webapp
+                    '''
+
+                    sshagent(['jenkins_key']) {
+                         sh '''
+                            ssh -o StrictHostKeyChecking=no ${Ec2_User}@${Ec2_Public_IP} 'mkdir /home/ec2-user/docker'
+                            scp -o StrictHostKeyChecking=no webapp.tar ${Ec2_User}@${Ec2_Public_IP}:${Remote_directiory}/docker
+                            ssh -o StrictHostKeyChecking=no ${Ec2_User}@${Ec2_Public_IP} '/home/ec2-user/docker/tar -xvf webapp.tar'
+                            ssh -o StrictHostKeyChecking=no ${Ec2_User}@${Ec2_Public_IP} 'docker load -i /home/ec2-user/docker/webapp.tar'
+			'''
+                        }
+                    }
+                }
+            }
+            
+        stage ('Push docker to Dockerhub') {
+            steps {
+                script {
+                    withCredentials([usernameColonPassword(credentialsId: 'docker-jenkins', variable: '')]) {
+			sh 'docker login -u ${USERNAME} -p ${PASSWORD}'
+			sh 'docker tag ${Docker_image} ${USERNAME}/${Docker_image}:latest'
+                        sh 'docker push ${USERNAME}/${Docker_image}:latest'
+                    }
+                }
+            }
+        }
+
+        stage ('Build docker container') {
+            steps {
+                script {
+                    sshagent(['jenkins_key']) {
+                        sh '''
+                            ssh -o StrictHostKeyChecking=no ${Ec2_User}@${Ec2_Public_IP} 'docker run -d -p 80:3000 webapp'
+			'''
+                        }
+                    }
+                }
+            }
+        }
+    }
