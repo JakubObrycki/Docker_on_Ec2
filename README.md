@@ -1,1 +1,1 @@
-
+The project presents the creation and launch of an Ec2 instance on AWS, the configuration of the Jenkins server and the creation of a pipline with the necessary tools. The aim of the project was to implement a web application on an EC2 instance.
